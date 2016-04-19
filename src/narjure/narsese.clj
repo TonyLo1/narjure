@@ -40,16 +40,23 @@
    "&/" 'sequential-events
    "&|" 'parallel-events})
 
+(def tenses
+  {":|:"  :present
+   ":/:"  :future
+   ":\\:" :past})
+
 (defn get-compound-term [[_ operator-srt]]
   (compound-terms operator-srt))
 
-(def actions {"." :judgement
-              "?" :question})
+(def task-types {"." :judgement
+                 "?" :question})
 
-(def ^:dynamic *action* (atom nil))
+(def ^:dynamic *task-type* (atom nil))
 (def ^:dynamic *lvars* (atom []))
 (def ^:dynamic *truth* (atom []))
 (def ^:dynamic *budget* (atom []))
+(def ^:dynamic *tense* (atom :present))
+(def ^:dynamic *syntactic-complexity* nil)
 
 (defn keep-cat [fun col]
   (into [] (comp (mapcat fun) (filter (complement nil?))) col))
@@ -64,16 +71,20 @@
 
 (defmethod element :sentence [[_ & data]]
   (let [filtered (group-by string? data)]
-    (reset! *action* (actions (first (filtered true))))
+    (reset! *task-type* (task-types (first (filtered true))))
     (let [cols (filtered false)
           last-el (last cols)]
       (when (= :truth (first last-el))
         (element last-el))
+      (when-let [tense (some #(when (= :tense (first %)) %) data)]
+        (element tense))
       (element (first cols)))))
 
 (defmethod element :statement [[_ & data]]
   (if-let [copula (get-copula data)]
-    `[~copula ~@(keep-cat element data)]
+    (do
+      (swap! *syntactic-complexity* inc)
+      `[~copula ~@(keep-cat element data)])
     (keep-cat element data)))
 
 (defmethod element :task [[_ & data]]
@@ -125,8 +136,12 @@
   (element (last data)))
 
 (defmethod element :term [[_ & data]]
+  (swap! *syntactic-complexity* inc)
   (when (seq? data)
     (keep element data)))
+
+(defmethod element :tense [[_ key]]
+  (reset! *tense* (tenses key)))
 
 (defmethod element :default [_])
 
@@ -148,16 +163,20 @@
   [narsese-str]
   (let [data (parser narsese-str)]
     (if-not (i/failure? data)
-      (binding [*action* (atom nil)
+      (binding [*task-type* (atom nil)
                 *lvars* (atom [])
                 *truth* (atom [])
-                *budget* (atom [])]
+                *budget* (atom [])
+                *tense* (atom :present)
+                *syntactic-complexity* (atom 0)]
         (let [statement (element data)
-              act @*action*]
-          {:action    act
-           :lvars     @*lvars*
-           :truth     (check-truth-value @*truth*)
-           :budget    (check-budget @*budget* act)
-           :statement statement
-           :terms     (terms statement)}))
+              act @*task-type*]
+          {:task-type            act
+           :lvars                @*lvars*
+           :truth                (check-truth-value @*truth*)
+           :budget               (check-budget @*budget* act)
+           :statement            statement
+           :tense                @*tense*
+           :syntactic-complexity @*syntactic-complexity*
+           :terms                (terms statement)}))
       data)))
